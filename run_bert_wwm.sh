@@ -1,11 +1,13 @@
 #!/bin/bash
 
+hostname
 source activate bert-tf 
 
-CMRC_DIR="../CMRC/"
+# CMRC_DIR="../CMRC/"
+CMRC_DIR="../squad-style-data/"
 
 PATH_TO_BERT="../chinese_wwm_ext_L-12_H-768_A-12"
-MODEL_DIR="experiments/chinese_wwm_ext"
+MODEL_DIR="experiments/chinese_wwm_ext_cmrc2018_squad_style"
 python ./baseline/run_cmrc2018_drcd_baseline.py \
     --vocab_file=${PATH_TO_BERT}/vocab.txt \
     --bert_config_file=${PATH_TO_BERT}/bert_config.json \
@@ -23,3 +25,5 @@ python ./baseline/run_cmrc2018_drcd_baseline.py \
     --output_dir=${MODEL_DIR} \
     --do_lower_case=False \
     --use_tpu=False
+
+

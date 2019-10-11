@@ -173,11 +173,11 @@ class SquadExample(object):
                start_position=None,
                end_position=None):
     self.qas_id = qas_id
-    self.question_text = question_text
-    self.doc_tokens = doc_tokens
-    self.orig_answer_text = orig_answer_text
-    self.start_position = start_position
-    self.end_position = end_position
+    self.question_text = question_text # 问题
+    self.doc_tokens = doc_tokens # 文本
+    self.orig_answer_text = orig_answer_text # 原答案
+    self.start_position = start_position # 答案在文本中的起始位置
+    self.end_position = end_position # 答案在文本中的结束位置
 
   def __str__(self):
     return self.__repr__()
@@ -224,7 +224,7 @@ class InputFeatures(object):
     self.start_position = start_position
     self.end_position = end_position
 
-#
+# 中文版的tokenizer
 def customize_tokenizer(text, do_lower_case=False):
   tokenizer = tokenization.BasicTokenizer(do_lower_case=do_lower_case)
   temp_x = ""
@@ -272,7 +272,7 @@ def read_squad_examples(input_file, is_training):
   for entry in input_data:
     for paragraph in entry["paragraphs"]:
       paragraph_text = paragraph["context"]
-      raw_doc_tokens = customize_tokenizer(paragraph_text)
+      raw_doc_tokens = customize_tokenizer(paragraph_text) # 用customize_tokenizer做分词，文章和答案的基本单位是一个词
       doc_tokens = []
       char_to_word_offset = []
       prev_is_whitespace = True
@@ -364,7 +364,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
       sub_tokens = tokenizer.tokenize(token)
       for sub_token in sub_tokens:
         tok_to_orig_index.append(i)
-        all_doc_tokens.append(sub_token)
+        all_doc_tokens.append(sub_token) # 用tokenizer 对单词再进行分词
 
     tok_start_position = None
     tok_end_position = None
@@ -599,7 +599,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids, i
       use_one_hot_embeddings=use_one_hot_embeddings)
 
 
-  final_hidden = model.get_sequence_output()
+  final_hidden = model.get_sequence_output() # [batch_size, seq_length, hidden_size]
 
   final_hidden_shape = modeling.get_shape_list(final_hidden, expected_rank=3)
   batch_size = final_hidden_shape[0]
@@ -630,7 +630,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids, i
   start_logits   += adder
   end_logits     += adder
 
-  return (start_logits, end_logits)
+  return (start_logits, end_logits) # [batch_size, seq_length]
 
 
 #
@@ -700,7 +700,7 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
       start_positions = features["start_positions"]
       end_positions   = features["end_positions"]
 
-      start_loss  = compute_loss(start_logits, start_positions)
+      start_loss  = compute_loss(start_logits, start_positions) # cross entropy loss
       end_loss    = compute_loss(end_logits, end_positions)
       total_loss  = (start_loss + end_loss) / 2
 
@@ -713,7 +713,8 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
           train_op=train_op,
           scaffold_fn=scaffold_fn)
     elif mode == tf.estimator.ModeKeys.PREDICT:
-      start_logits = tf.nn.log_softmax(start_logits, axis=-1)
+      # 输出的预测就是start logits 和 end logits
+      start_logits = tf.nn.log_softmax(start_logits, axis=-1) 
       end_logits = tf.nn.log_softmax(end_logits, axis=-1)
 
       predictions = {
@@ -893,6 +894,7 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
 
     # In very rare edge cases we could have no valid predictions. So we
     # just create a nonce prediction in this case to avoid failure.
+    # 思考一下什么时候会发生没有正确答案的情况：可能是start index一直在end index之后。
     if not nbest:
       nbest.append(
           _NbestPrediction(text="empty", start_logit=0.0, end_logit=0.0))
