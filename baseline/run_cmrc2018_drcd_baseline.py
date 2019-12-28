@@ -346,6 +346,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                                  doc_stride, max_query_length, is_training,
                                  output_fn):
   """Loads a data file into a list of `InputBatch`s."""
+  """添加[CLS], [SEP], segment id等BERT需要的预处理,"""
 
   unique_id = 1000000000
   tokenizer = ChineseFullTokenizer(vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
@@ -590,6 +591,7 @@ def _check_is_max_context(doc_spans, cur_span_index, position):
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids, input_span_mask,
                  use_one_hot_embeddings):
   """Creates a classification model."""
+  """模型的核心代码，使用BertModel来编码问题和文档，然后对start_logits和end_logits计算损失函数"""
   model = modeling.BertModel(
       config=bert_config,
       is_training=is_training,
@@ -600,7 +602,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids, i
 
 
   final_hidden = model.get_sequence_output() # [batch_size, seq_length, hidden_size]
-
+  # 预测答案的开端位置和结束位置
   final_hidden_shape = modeling.get_shape_list(final_hidden, expected_rank=3)
   batch_size = final_hidden_shape[0]
   seq_length = final_hidden_shape[1]
@@ -624,6 +626,8 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids, i
   unstacked_logits = tf.unstack(logits, axis=0)
 
   (start_logits, end_logits) = (unstacked_logits[0], unstacked_logits[1])
+  # start_logits: [batch_size, seq_length, 1]
+  # end_logits: [batch_size, seq_length, 1]
 
   # apply output mask
   adder           = (1.0 - tf.cast(input_span_mask, tf.float32)) * -10000.0
@@ -700,6 +704,7 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
       start_positions = features["start_positions"]
       end_positions   = features["end_positions"]
 
+      # 计算cross entropy loss
       start_loss  = compute_loss(start_logits, start_positions) # cross entropy loss
       end_loss    = compute_loss(end_logits, end_positions)
       total_loss  = (start_loss + end_loss) / 2
@@ -719,8 +724,8 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
 
       predictions = {
           "unique_ids": unique_ids,
-          "start_logits": start_logits,
-          "end_logits": end_logits,
+          "start_logits": start_logits, # argmax, 找到答案开始位置
+          "end_logits": end_logits, # argmax, 找到答案结束位置
       }
       output_spec = tf.contrib.tpu.TPUEstimatorSpec(
           mode=mode, predictions=predictions, scaffold_fn=scaffold_fn)
@@ -808,6 +813,8 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
   all_predictions = collections.OrderedDict()
   all_nbest_json = collections.OrderedDict()
 
+
+  # 找出n个最佳logits位置
   for (example_index, example) in enumerate(all_examples):
     features = example_index_to_features[example_index]
     prelim_predictions = []
@@ -831,7 +838,7 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
             continue
           if not feature.token_is_max_context.get(start_index, False):
             continue
-          if end_index < start_index:
+          if end_index < start_index: # 这个答案是无效的，因为结束在开始的前面
             continue
           length = end_index - start_index + 1
           if length > max_answer_length:
@@ -844,6 +851,7 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
                   start_logit=result.start_logits[start_index],
                   end_logit=result.end_logits[end_index]))
 
+    # start_logit + end_logit最大的答案我们认为是正确答案
     prelim_predictions = sorted(
         prelim_predictions,
         key=lambda x: (x.start_logit + x.end_logit),
