@@ -206,7 +206,7 @@ class BasicTokenizer(object):
     # words in the English Wikipedia.).
     text = self._tokenize_chinese_chars(text)
 
-    orig_tokens = whitespace_tokenize(text)
+    orig_tokens = whitespace_tokenize(text) # 用空格来分隔单词，正好用上了我们之前用空格分隔过的文本
     split_tokens = []
     for token in orig_tokens:
       if self.do_lower_case:
@@ -250,6 +250,7 @@ class BasicTokenizer(object):
 
   def _tokenize_chinese_chars(self, text):
     """Adds whitespace around any CJK character."""
+    """在中文字之间增加空格"""
     output = []
     for char in text:
       cp = ord(char)

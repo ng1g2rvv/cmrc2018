@@ -198,7 +198,7 @@ class BertModel(object):
         # This converts a 2D mask of shape [batch_size, seq_length] to a 3D
         # mask of shape [batch_size, seq_length, seq_length] which is used
         # for the attention scores.
-        attention_mask = create_attention_mask_from_input_mask(
+        attention_mask = create_att=ion_mask_from_input_mask(
             input_ids, input_mask)
 
         # Run the stacked transformer.

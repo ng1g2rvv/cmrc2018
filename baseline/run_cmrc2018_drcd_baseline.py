@@ -217,10 +217,15 @@ class InputFeatures(object):
     self.tokens = tokens
     self.token_to_orig_map = token_to_orig_map
     self.token_is_max_context = token_is_max_context
-    self.input_ids = input_ids
+
+    # 这三个是BERT的核心输入
+    self.input_ids = input_ids 
     self.input_mask = input_mask
-    self.segment_ids = segment_ids
+    self.segment_ids = segment_ids # roberta不需要segment ID
+
     self.input_span_mask = input_span_mask
+
+    # 下面两个是label
     self.start_position = start_position
     self.end_position = end_position
 
@@ -236,7 +241,7 @@ def customize_tokenizer(text, do_lower_case=False):
       temp_x += c
   if do_lower_case:
     temp_x = temp_x.lower()
-  return temp_x.split()
+  return temp_x.split() # 所以我们这里会拿到一个list
 
 #
 class ChineseFullTokenizer(object):
@@ -261,7 +266,7 @@ class ChineseFullTokenizer(object):
   def convert_ids_to_tokens(self, ids):
     return tokenization.convert_by_vocab(self.inv_vocab, ids)
 
-#
+# 这可能是整个文件中唯一的核心代码，把原本的start position和end position转换成使用BERT分词之后的start position和end position。
 def read_squad_examples(input_file, is_training):
   """Read a SQuAD json file into a list of SquadExample."""
   with tf.gfile.Open(input_file, "r") as reader:
@@ -274,11 +279,15 @@ def read_squad_examples(input_file, is_training):
       paragraph_text = paragraph["context"]
       raw_doc_tokens = customize_tokenizer(paragraph_text) # 用customize_tokenizer做分词，文章和答案的基本单位是一个词
       doc_tokens = []
-      char_to_word_offset = []
+      char_to_word_offset = [] # 寻找每个character究竟对应的是第几个word
       prev_is_whitespace = True
 
       k = 0
       temp_word = ""
+
+      # 原文当中的两个character在经过分词之后可能变成了同一个token当中的。
+      # 构建一个从character到token之间的mapping，这样方便我后续把原来的start和end
+      # position调整到分词之后的情况。
       for c in paragraph_text:
         if tokenization._is_whitespace(c):
           char_to_word_offset.append(k-1)
@@ -311,6 +320,8 @@ def read_squad_examples(input_file, is_training):
           else:
             answer_offset = paragraph_text.index(orig_answer_text)
             answer_length = len(orig_answer_text)
+
+            # 我们调整start position和end position以适应bert分词之后的情况。
             start_position = char_to_word_offset[answer_offset]
             end_position = char_to_word_offset[answer_offset + answer_length - 1]
 
@@ -341,7 +352,8 @@ def read_squad_examples(input_file, is_training):
   
   return examples
 
-
+# 这段代码把我们之前分词的文本信息转换成BERT需要的输入
+# input_ids, input_masks, segment_ids
 def convert_examples_to_features(examples, tokenizer, max_seq_length,
                                  doc_stride, max_query_length, is_training,
                                  output_fn):
@@ -352,6 +364,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
   tokenizer = ChineseFullTokenizer(vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
 
   for (example_index, example) in enumerate(examples):
+    # 一个一个处理example
     query_tokens = tokenizer.tokenize(example.question_text)
 
     if len(query_tokens) > max_query_length:
@@ -361,6 +374,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
     orig_to_tok_index = []
     all_doc_tokens = []
     for (i, token) in enumerate(example.doc_tokens):
+      # 每一个经过简单分词的token我们都要扔进BERT模型继续做一遍分词
       orig_to_tok_index.append(len(all_doc_tokens))
       sub_tokens = tokenizer.tokenize(token)
       for sub_token in sub_tokens:
@@ -407,7 +421,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
       tokens.append("[CLS]")
       segment_ids.append(0)
       input_span_mask.append(1)
-      for token in query_tokens:
+      for token in query_tokens: # 加上query token
         tokens.append(token)
         segment_ids.append(0)
         input_span_mask.append(0)
@@ -415,7 +429,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
       segment_ids.append(0)
       input_span_mask.append(0)
 
-      for i in range(doc_span.length):
+      for i in range(doc_span.length): # 加上document token
         split_token_index = doc_span.start + i
         token_to_orig_map[len(tokens)] = tok_to_orig_index[split_token_index]
 
@@ -425,11 +439,11 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         tokens.append(all_doc_tokens[split_token_index])
         segment_ids.append(1)
         input_span_mask.append(1)
-      tokens.append("[SEP]")
+      tokens.append("[SEP]") # 最后再添加一个separator
       segment_ids.append(1)
       input_span_mask.append(0)
 
-      input_ids = tokenizer.convert_tokens_to_ids(tokens)
+      input_ids = tokenizer.convert_tokens_to_ids(tokens) # 变成数字
 
       # The mask has 1 for real tokens and 0 for padding tokens. Only real
       # tokens are attended to.
@@ -611,6 +625,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids, i
   output_weights = tf.get_variable(
       "cls/squad/output_weights", [2, hidden_size],
       initializer=tf.truncated_normal_initializer(stddev=0.02))
+  # 把hidden_size转换成2个分数。2表示一个是start score, 一个是end score
 
   output_bias = tf.get_variable(
       "cls/squad/output_bias", [2], initializer=tf.zeros_initializer())
@@ -621,13 +636,14 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids, i
   logits = tf.nn.bias_add(logits, output_bias)
 
   logits = tf.reshape(logits, [batch_size, seq_length, 2])
+  # 这里输出的logits形状为 batch_size, seq_length, 2
   logits = tf.transpose(logits, [2, 0, 1])
 
   unstacked_logits = tf.unstack(logits, axis=0)
 
   (start_logits, end_logits) = (unstacked_logits[0], unstacked_logits[1])
-  # start_logits: [batch_size, seq_length, 1]
-  # end_logits: [batch_size, seq_length, 1]
+  # start_logits: [batch_size, seq_length]
+  # end_logits: [batch_size, seq_length]
 
   # apply output mask
   adder           = (1.0 - tf.cast(input_span_mask, tf.float32)) * -10000.0
@@ -695,8 +711,13 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
     if mode == tf.estimator.ModeKeys.TRAIN:
       seq_length = modeling.get_shape_list(input_ids)[1]
 
+      # 计算cross entropy (log) loss
       def compute_loss(logits, positions):
+        """ logits: 模型预测的每个位置的分数
+            positions: 正确的位置
+        """
         on_hot_pos    = tf.one_hot(positions, depth=seq_length, dtype=tf.float32)
+        # 计算log probability
         log_probs     = tf.nn.log_softmax(logits, axis=-1)
         loss          = -tf.reduce_mean(tf.reduce_sum(on_hot_pos * log_probs, axis=-1))
         return loss
@@ -705,6 +726,7 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
       end_positions   = features["end_positions"]
 
       # 计算cross entropy loss
+      # 计算开始和结束两个位置的损失
       start_loss  = compute_loss(start_logits, start_positions) # cross entropy loss
       end_loss    = compute_loss(end_logits, end_positions)
       total_loss  = (start_loss + end_loss) / 2
